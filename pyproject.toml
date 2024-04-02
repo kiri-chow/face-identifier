@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "face-identifier"
+version = "0.1.0"
+description = "A CNN network generating face ID from images."
+authors = ["Anthony Chow <mrchowpoor@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+numpy = "^1.26.4"
+torch = "^2.2.2"
+torchvision = "^0.17.2"
+torchaudio = "^2.2.2"
+
+
+[tool.poetry.group.dev.dependencies]
+matplotlib = "^3.8.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
