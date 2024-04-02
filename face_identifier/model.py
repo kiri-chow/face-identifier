@@ -10,7 +10,7 @@ The identifier model.
 """
 from torch import nn
 from torch.nn import functional as F
-from torchvision.models import resnet34, ResNet34_Weights
+from torchvision.models import resnet50, ResNet50_Weights
 
 
 class FaceIdentifier(nn.Module):
@@ -27,12 +27,12 @@ class FaceIdentifier(nn.Module):
         Number of convolution layers to lock.
 
     """
-    def __init__(self, output_dim=500, pretrain=True, lock_num=3):
+    def __init__(self, output_dim=500, pretrain=True, lock_num=0):
         super().__init__()
         weights = None
         if pretrain:
-            weights = ResNet34_Weights.DEFAULT
-        self.model = resnet34(weights=weights)
+            weights = ResNet50_Weights.DEFAULT
+        self.model = resnet50(weights=weights)
 
         # lock the convolution layers
         for i in range(1, lock_num + 1):
@@ -42,10 +42,14 @@ class FaceIdentifier(nn.Module):
 
         # adjust the final layers
         self.model.fc = nn.Linear(self.model.fc.in_features, output_dim)
+        self.linear1 = nn.Linear(output_dim, output_dim)
+        self.linear2 = nn.Linear(output_dim, output_dim)
 
     def forward(self, x):
         "forward propagation"
         x = self.model(x)
+        x = self.linear1(F.relu(x))
+        x = self.linear2(F.relu(x))
 
         # normalization
         x = F.normalize(x)
