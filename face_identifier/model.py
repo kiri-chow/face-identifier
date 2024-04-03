@@ -8,6 +8,7 @@ Created on Tue Apr  2 11:14:35 2024
 The identifier model.
 
 """
+from collections import OrderedDict
 from torch import nn
 from torch.nn import functional as F
 from torchvision.models import resnet50, ResNet50_Weights
@@ -40,16 +41,17 @@ class FaceIdentifier(nn.Module):
             for parameters in layer.parameters():
                 parameters.requires_grad = False
 
-        # adjust the final layers
-        self.model.fc = nn.Linear(self.model.fc.in_features, output_dim)
-        self.linear1 = nn.Linear(output_dim, output_dim)
-        self.linear2 = nn.Linear(output_dim, output_dim)
+        # add the final layer
+        self.out_features = output_dim
+        self.fc = nn.Sequential(OrderedDict([
+            ("relu1", nn.ReLU()),
+            ("ln2", nn.Linear(self.model.fc.out_features, output_dim)),
+        ]))
 
     def forward(self, x):
         "forward propagation"
         x = self.model(x)
-        x = self.linear1(F.relu(x))
-        x = self.linear2(F.relu(x))
+        x = self.fc(x)
 
         # normalization
         x = F.normalize(x)
