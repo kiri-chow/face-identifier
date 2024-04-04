@@ -22,14 +22,16 @@ class CropFace(nn.Module):
 
     """
 
-    def __init__(self, path, threshold=0.5, size=256):
+    def __init__(self, path, threshold=0.5, size=256, scalar=1.1):
         super().__init__()
         self.model = FaceDetector.load(path)
         self.threshold = threshold
         self.size = size
+        self.scalar = scalar
 
-    def forward(self, x):
+    def forward(self, *args):
         "crop tensor"
+        x = args[0]
         with torch.no_grad():
             # detect face
             self.model.eval()
@@ -42,14 +44,14 @@ class CropFace(nn.Module):
                 return torch.zeros_like(x)
 
             # crop image
-            # x1, y1, x2, y2 = prediction[1:] / has_face * self.size
-            x1, y1, x2, y2 = prediction[1:] * self.size
-            # x1, x2 = sorted([x1, x2])
-            # y1, y2 = sorted([y1, y2])
-            # x2 = x2 * 1.1
-            # y2 = y2 * 1.1
+            bbox = prediction[1:] * self.size
+            x1, y1, x2, y2 = bbox
+            x1, x2 = sorted([x1, x2])
+            y1, y2 = sorted([y1, y2])
+            x1, y1 = (x / self.scalar for x in (x1, y1))
+            x2, y2 = (x * self.scalar for x in (x2, y2))
             image = TENSOR2IMG(x).crop(
                 (x1, y1, x2, y2)).resize((self.size, self.size))
-            out = TENSORIZER(image)
+            out = TENSORIZER(image) / 256
 
         return out

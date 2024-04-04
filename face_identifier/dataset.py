@@ -131,19 +131,19 @@ class IdentityDataSet(Dataset):
         image = image.resize((self.size, self.size))
         image = TENSORIZER(image) / 256
         if self.transform:
-            image, _ = self.transform((image, 0))
+            image = self.transform(image)
         return image
 
     def __getitem__(self, index):
         # return 2 pictures of the given person
-        paths = random.sample(self.data[self.index[index]], 2)
+        paths = random.sample(self.data[self.index[index]], self.n_images)
         images = torch.concat([self.__read_and_convert(pth) for pth in paths])
-        images = images.view(2, -1, self.size, self.size)
+        images = images.view(self.n_images, -1, self.size, self.size)
         return images, 0, 0
 
     def draw(self, index):
         "visualize data"
-        images = self[index]
+        images = self[index][0]
         fig, axes = plt.subplots(1, self.n_images)
         for ax, img in zip(axes, images):
             draw_tensor_image(img, ax)

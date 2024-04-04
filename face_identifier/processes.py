@@ -147,8 +147,6 @@ def train(model, data_loader, optimizer, loss_func, device="cpu"):
         data_loader of training set.
     optimizer : torch.optim.*
     device : "cpu" or "cuda"
-    n_images : int,
-        number of images of each people.
 
     returns
     -------
@@ -184,8 +182,6 @@ def test(model, data_loader, loss_func, device="cpu", return_outputs=False):
     data_loader : torch.utils.data.DataLoader,
         data_loader of test set.
     device : "cpu" or "cuda"
-    n_images : int,
-        number of images of each people.
     return_outputs : bool,
         return the outputs from model.
 
@@ -222,7 +218,7 @@ def _convert_shape(images):
 def _merge_label(has_faces, bboxes):
     # identifier case
     if has_faces.shape == bboxes.shape:
-        return 0
+        return torch.Tensor([0])[0]
 
     # detector case
     has_faces = has_faces.view(-1, 1)
