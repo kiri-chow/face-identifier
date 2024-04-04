@@ -109,6 +109,9 @@ class FaceDetector(nn.Module):
         "forward propagation"
         x = self.model(x)
         has_face = self.has_face(x)
-        bbox = self.bbox(x) * has_face
+        bbox = self.bbox(x)
+
+        # mask bbox
+        bbox[(has_face <= 0.5).flatten()] = 0
         to_return = torch.cat([has_face, bbox], dim=1)
         return to_return

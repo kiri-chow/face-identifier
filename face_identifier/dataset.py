@@ -17,6 +17,7 @@ from matplotlib import pyplot as plt
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
+from torchvision import tv_tensors
 
 
 _REG_SPLIT = re.compile(r'\s+')
@@ -130,7 +131,7 @@ class IdentityDataSet(Dataset):
         image = image.resize((self.size, self.size))
         image = TENSORIZER(image) / 256
         if self.transform:
-            image = self.transform(image)
+            image, _ = self.transform((image, 0))
         return image
 
     def __getitem__(self, index):
@@ -138,7 +139,7 @@ class IdentityDataSet(Dataset):
         paths = random.sample(self.data[self.index[index]], 2)
         images = torch.concat([self.__read_and_convert(pth) for pth in paths])
         images = images.view(2, -1, self.size, self.size)
-        return images, 0
+        return images, 0, 0
 
     def draw(self, index):
         "visualize data"
@@ -194,48 +195,50 @@ class FaceDataset(Dataset):
         image = Image.open(os.path.join(self.path_images, path_img))
 
         # read bbox
-        x1, y1, x2, y2 = self.__convet_bbox(image, bbox)
+        bbox = self.__convet_bbox(image, bbox)
 
         image = TENSORIZER(image.resize((self.size, self.size))) / 256
         if image.shape[0] == 1:
             image = torch.cat([image] * 3)
-        label = torch.Tensor([has_face, x1, y1, x2, y2])
+
+        # construct data
+        has_face = torch.Tensor([has_face])[0]
+        bbox = tv_tensors.BoundingBoxes(
+            [bbox], format='XYXY', canvas_size=[1, 1])
+        data = (image, has_face, bbox)
 
         if self.transform:
-            image = self.transform(image)
-            label = self.transform(label)
+            data = self.transform(data)
 
-        return image, label
+        return data
 
     def draw(self, index, prediction=None):
         "visualize data"
-        image, label = self[index]
+        image, has_face, bbox = self[index]
         ax = draw_tensor_image(image)
 
-        has_face = label[0].item()
         if has_face:
-            x1, y1, x2, y2 = label[1:].numpy() * self.size
+            x1, y1, x2, y2 = bbox.numpy()[0] * self.size
             ax.plot([x1, x1, x2, x2, x1], [y1, y2, y2, y1, y1])
 
         if prediction is not None:
             prediction = prediction.cpu().detach().numpy()
             has_face = prediction[0]
             if has_face > 0.5:
-                x1, y1, x2, y2 = prediction[1:] / has_face * self.size
+                # x1, y1, x2, y2 = prediction[1:] / has_face * self.size
+                x1, y1, x2, y2 = prediction[1:] * self.size
                 ax.plot([x1, x1, x2, x2, x1], [y1, y2, y2, y1, y1])
         return ax
 
     def __convet_bbox(self, image, bbox):
-        # x1, y1, x2, y2 = bbox
-        y1, x1, y2, x2 = bbox
-        # y1, y2, x1, x2 = bbox
+        x1, y1, x2, y2 = bbox
         # x1, x2, y1, y2 = bbox
         width, height = image.size
         x1 /= width
         x2 /= width
         y1 /= height
         y2 /= height
-        return [x1, x2, y1, y2]
+        return [x1, y1, x2, y2]
 
 
 def draw_tensor_image(tensor, ax=None):

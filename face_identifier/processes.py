@@ -12,52 +12,9 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from face_identifier.loss import IdentifyLoss
-from face_identifier.model import FaceDetector
-from face_identifier.dataset import TENSOR2IMG, TENSORIZER
 
 
 LOSS_FUNC = IdentifyLoss(2)
-
-
-class CropFace(nn.Module):
-    """
-    Crop face area after detecting
-
-    params
-    ------
-    path : path,
-        path of face-detector's state dict
-
-    """
-
-    def __init__(self, path, threshold=0.5, size=256):
-        super().__init__()
-        self.model = FaceDetector.load(path)
-        self.threshold = threshold
-        self.size = size
-
-    def forward(self, x):
-        "crop tensor"
-        with torch.no_grad():
-            # detect face
-            self.model.eval()
-            prediction = self.model(x.view(1, *x.shape))[0]
-            prediction = prediction.cpu().detach().numpy()
-            has_face = prediction[0]
-    
-            # no face
-            if has_face <= self.threshold:
-                return torch.zeros_like(x)
-    
-            # crop image
-            x1, y1, x2, y2 = prediction[1:] / has_face * self.size
-            x1, x2 = sorted([x1, x2])
-            y1, y2 = sorted([y1, y2])
-            image = TENSOR2IMG(x).crop(
-                (x1, y1, x2, y2)).resize((self.size, self.size))
-            out = TENSORIZER(image)
-
-        return out
 
 
 class ClassificationModel(nn.Module):
@@ -202,9 +159,9 @@ def train(model, data_loader, optimizer, loss_func, device="cpu"):
     model.to(device)
     model.train()
     losses = []
-    for images, labels in data_loader:
+    for images, has_faces, bboxes in data_loader:
         images = _convert_shape(images).to(device)
-        labels = labels.to(device)
+        labels = _merge_label(has_faces, bboxes).to(device)
 
         optimizer.zero_grad()
         outputs = model(images)
@@ -244,9 +201,9 @@ def test(model, data_loader, loss_func, device="cpu", return_outputs=False):
     with torch.no_grad():
         model.eval()
         losses = []
-        for images, labels in data_loader:
+        for images, has_faces, bboxes in data_loader:
             images = _convert_shape(images).to(device)
-            labels = labels.to(device)
+            labels = _merge_label(has_faces, bboxes).to(device)
 
             outputs = model(images)
             loss = loss_func(outputs, labels)
@@ -260,3 +217,14 @@ def test(model, data_loader, loss_func, device="cpu", return_outputs=False):
 
 def _convert_shape(images):
     return images.view(-1, *images.shape[-3:])
+
+
+def _merge_label(has_faces, bboxes):
+    # identifier case
+    if has_faces.shape == bboxes.shape:
+        return 0
+
+    # detector case
+    has_faces = has_faces.view(-1, 1)
+    bboxes = bboxes.view(-1, 4)
+    return torch.cat([has_faces, bboxes], dim=1)
