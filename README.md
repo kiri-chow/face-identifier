@@ -12,25 +12,25 @@ The identifier returns a vector(face re-ID) after reading a face image.
 
 ### Face Detection
 
-```
+```python
 from face_identifier.model import FaceDetector
 
 model = FaceDetector.load("<path of state dict>")
 predictions = model(images_tensor)  # every row is [has_face, x1, y1, x2, y2]
-```python
+```
 
 ### Face Cropping
 
-```
+```python
 from face_identifier.transforms import CropFace
 
 cropper = CropFace("<path of state dict>")
 image_cropped = cropper(image_tensor)  # returning a tensor
-```python
+```
 
 ### Face re-ID
 
-```
+```python
 from face_identifier.model import FaceIdentifier
 
 model = FaceIdentifier.load("<path of state dict>")
