@@ -11,27 +11,35 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from face_identifier.loss import IdentifyLoss
 
 
-LOSS_FUNC = IdentifyLoss(2)
+def _call_identifier(model, data, device):
+    x, y, z = data
+    outputs = model(x.to(device), y.to(device), z.to(device))
+    labels = torch.zeros_like(outputs)
+    labels[:, 0] = 1
+    return outputs, labels.float().to(device)
 
 
-class ClassificationModel(nn.Module):
-    "Classfication model wrapping the face identifier"
+def _call_detector(model, data, device):
+    images, has_faces, bboxes = data
 
-    def __init__(self, model, out_features):
-        self.model = model
-        self.clf = nn.Sequential(
-            nn.Linear(self.model.out_features, out_features),
-            nn.Softmax(),
-        )
+    has_faces = has_faces.view(-1, 1)
+    bboxes = bboxes.view(-1, 4)
+    labels = torch.cat([has_faces, bboxes], dim=1)
 
-    def forward(self, x):
-        "forward propagation"
-        x = self.model(x)
-        x = self.clf(x)
-        return x
+    outputs = model(images.to(device))
+    return outputs, labels.to(device)
+
+
+def _convert_shape(images):
+    return images.view(-1, *images.shape[-3:])
+
+
+MODEL_TO_FUNC = {
+    'detector': _call_detector,
+    'identifier': _call_identifier,
+}
 
 
 class ModelTrainer:
@@ -50,14 +58,17 @@ class ModelTrainer:
     device : "cpu" or "cuda"
     save_path : str,
         path to save the model's state dict.
+    model_type : "detector" or "identifier",
+        model to train
     log_dir : str,
         log for tensorboard
 
     """
 
     def __init__(self, model, training_set, val_set, optimizer,
-                 batch_size=10, loss_func=None, device='cpu',
+                 loss_func, batch_size=10, device='cpu',
                  save_path="face-identifier.pt",
+                 model_type='identifier',
                  log_dir=None, log_name='Loss'):
         self.model = model
 
@@ -66,16 +77,13 @@ class ModelTrainer:
         self.val_loader = DataLoader(
             val_set, batch_size=batch_size, shuffle=False)
 
-        if loss_func:
-            self.loss_func = loss_func
-        else:
-            self.loss_func = LOSS_FUNC
-
+        self.loss_func = loss_func
         self.optimizer = optimizer
         self.device = device
         self.save_path = save_path
         self.writer = SummaryWriter(log_dir)
         self.log_name = log_name
+        self.call_func = MODEL_TO_FUNC[model_type]
 
         self.epochs_trained = 0
         self.best_loss = inf
@@ -98,6 +106,7 @@ class ModelTrainer:
         if not self.epochs_trained:
             self.best_loss = test(
                 self.model, tqdm(self.val_loader, 'Valing'),
+                call_func=self.call_func,
                 loss_func=self.loss_func,
                 device=self.device)
             self.save_model()
@@ -113,12 +122,15 @@ class ModelTrainer:
                 self.model,
                 tqdm(self.training_loader,
                      f"Training[{self.epochs_trained}/{total_epoches}]"),
-                self.optimizer, loss_func=self.loss_func,
+                self.optimizer,
+                call_func=self.call_func,
+                loss_func=self.loss_func,
                 device=self.device)
 
             # validation
             val_loss = test(
                 self.model, tqdm(self.val_loader, desc="Valing"),
+                call_func=self.call_func,
                 loss_func=self.loss_func,
                 device=self.device)
 
@@ -135,7 +147,7 @@ class ModelTrainer:
                 }, self.epochs_trained)
 
 
-def train(model, data_loader, optimizer, loss_func, device="cpu"):
+def train(model, data_loader, optimizer, call_func, loss_func, device="cpu"):
     """
     training process of face identifier
 
@@ -157,12 +169,9 @@ def train(model, data_loader, optimizer, loss_func, device="cpu"):
     model.to(device)
     model.train()
     losses = []
-    for images, has_faces, bboxes in data_loader:
-        images = _convert_shape(images).to(device)
-        labels = _merge_label(has_faces, bboxes).to(device)
-
+    for data in data_loader:
         optimizer.zero_grad()
-        outputs = model(images)
+        outputs, labels = call_func(model, data, device)
         loss = loss_func(outputs, labels)
         loss.backward()
         optimizer.step()
@@ -171,7 +180,7 @@ def train(model, data_loader, optimizer, loss_func, device="cpu"):
     return loss
 
 
-def test(model, data_loader, loss_func, device="cpu", return_outputs=False):
+def test(model, data_loader, call_func, loss_func, device="cpu", return_outputs=False):
     """
     test process of face identifier
 
@@ -197,11 +206,8 @@ def test(model, data_loader, loss_func, device="cpu", return_outputs=False):
     with torch.no_grad():
         model.eval()
         losses = []
-        for images, has_faces, bboxes in data_loader:
-            images = _convert_shape(images).to(device)
-            labels = _merge_label(has_faces, bboxes).to(device)
-
-            outputs = model(images)
+        for data in data_loader:
+            outputs, labels = call_func(model, data, device)
             loss = loss_func(outputs, labels)
             losses.append(loss.item())
     loss = sum(losses) / len(losses)
@@ -209,18 +215,3 @@ def test(model, data_loader, loss_func, device="cpu", return_outputs=False):
     if return_outputs:
         return loss, outputs
     return loss
-
-
-def _convert_shape(images):
-    return images.view(-1, *images.shape[-3:])
-
-
-def _merge_label(has_faces, bboxes):
-    # identifier case
-    if has_faces.shape == bboxes.shape:
-        return torch.Tensor([0])[0]
-
-    # detector case
-    has_faces = has_faces.view(-1, 1)
-    bboxes = bboxes.view(-1, 4)
-    return torch.cat([has_faces, bboxes], dim=1)

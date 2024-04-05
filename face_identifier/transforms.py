@@ -5,10 +5,13 @@ Created on Wed Apr  3 23:12:49 2024
 
 @author: anthony
 """
+import os
 import torch
+from PIL import Image
+import numpy as np
 from torch import nn
-from face_identifier.model import FaceDetector
-from face_identifier.dataset import TENSOR2IMG, TENSORIZER
+from face_identifier.models import FaceDetector
+from face_identifier.datasets import TENSOR2IMG, TENSORIZER, read_image
 
 
 class CropFace(nn.Module):
@@ -18,7 +21,13 @@ class CropFace(nn.Module):
     params
     ------
     path : path,
-        path of face-detector's state dict
+        path of face-detector's state dict.
+    threshold : [0, 1),
+        threshold determining the image has face or not.
+    size : int,
+        size of output image
+    scalar : float,
+        scaling detected bbox
 
     """
 
@@ -29,9 +38,33 @@ class CropFace(nn.Module):
         self.size = size
         self.scalar = scalar
 
-    def forward(self, *args):
-        "crop tensor"
-        x = args[0]
+    def crop_images(self, paths, save_dir="cropped"):
+        "crop and save images"
+        for path in paths:
+            image = Image.open(path)
+            bbox, has_face = self.get_bbox(read_image(path, self.size))
+            if not has_face:
+                continue
+
+            # crop
+            bbox = (np.array(bbox).reshape(2, 2) * image.size).flatten()
+            image_cropped = image.crop(bbox)
+
+            # save
+            _, fp = os.path.split(path)
+            os.makedirs(os.path.join(save_dir), exist_ok=True)
+            image_cropped.save(os.path.join(save_dir, fp))
+
+    def get_bbox(self, x):
+        """
+        return face bbox from tensor
+
+        returns
+        -------
+        bbox : [x1, y1, x2, y2],
+        has_face : bool
+
+        """
         with torch.no_grad():
             # detect face
             self.model.eval()
@@ -41,17 +74,25 @@ class CropFace(nn.Module):
 
             # no face
             if has_face <= self.threshold:
-                return torch.zeros_like(x)
+                return [0, 0, 0, 0], False
 
             # crop image
-            bbox = prediction[1:] * self.size
+            bbox = prediction[1:]
             x1, y1, x2, y2 = bbox
             x1, x2 = sorted([x1, x2])
             y1, y2 = sorted([y1, y2])
             x1, y1 = (x / self.scalar for x in (x1, y1))
             x2, y2 = (x * self.scalar for x in (x2, y2))
-            image = TENSOR2IMG(x).crop(
-                (x1, y1, x2, y2)).resize((self.size, self.size))
-            out = TENSORIZER(image) / 256
+            return [x1, y1, x2, y2], True
 
+    def forward(self, *args):
+        "crop tensor"
+        x = args[0]
+        bbox, has_face = self.get_bbox(x)
+        if not has_face:
+            return torch.zeros_like(x)
+
+        bbox = [b * self.size for b in bbox]
+        image = TENSOR2IMG(x).crop(bbox).resize((self.size, self.size))
+        out = TENSORIZER(image) / 256
         return out

@@ -18,6 +18,68 @@ from torchvision.models import (
 )
 
 
+class TwinModel(nn.Module):
+    """
+    Twin model wrapping the face identifier.
+    This model is for training or evalation.
+
+    """
+
+    def __init__(self, model, threshold=0.5):
+        super().__init__()
+        self.model = model
+        self.threshold = threshold
+
+    def forward(self, x, y):
+        """
+        forward propagation
+
+        params
+        ------
+        x, y : tensor,
+            images for binary classification.
+
+        """
+        x = self.model(x)
+        y = self.model(y)
+        pred = F.cosine_similarity(x, y)
+        return pred > self.threshold
+
+
+class TripletModel(nn.Module):
+    """
+    Triplet model wrapping the face identifier.
+    This model is for training.
+
+    """
+
+    def __init__(self, model, threshold=0.5):
+        super().__init__()
+        self.model = model
+        self.threshold = threshold
+
+    def forward(self, x, y, z):
+        """
+        forward propagation
+
+        params
+        ------
+        x, y, z : tensor,
+            x : base images.
+            y : images from the same people as x.
+            z : images from different people from x.
+
+        """
+        x = self.model(x)
+        y = self.model(y)
+        z = self.model(z)
+        same = F.cosine_similarity(x, y)
+        diff = F.cosine_similarity(x, z)
+        pred = torch.cat([same.view(-1, 1), diff.view(-1, 1)], dim=1)
+        pred = F.sigmoid((pred - self.threshold) / self.threshold)
+        return pred
+
+
 class FaceIdentifier(nn.Module):
     """
     Face Identifier Model
@@ -36,7 +98,7 @@ class FaceIdentifier(nn.Module):
     def load(cls, path, **kwargs):
         """
         load model from path
-    
+
         """
         model = cls(pretrain=False, **kwargs)
         model.load_state_dict(torch.load(path))
@@ -61,6 +123,7 @@ class FaceIdentifier(nn.Module):
         self.fc = nn.Sequential(OrderedDict([
             ("relu1", nn.ReLU()),
             ("ln2", nn.Linear(self.model.fc.out_features, output_dim)),
+            # ("relu2", nn.ReLU())
         ]))
 
     def forward(self, x):
@@ -71,6 +134,18 @@ class FaceIdentifier(nn.Module):
         # normalization
         x = F.normalize(x)
         return x
+
+    def predict(self, *images):
+        """
+        return vectors for images tensor.
+
+        """
+        img0 = images[0]
+        images = torch.cat(images).view(-1, *img0.shape)
+        with torch.no_grad():
+            self.eval()
+            vectors = self.forward(images)
+        return vectors
 
 
 class FaceDetector(nn.Module):
@@ -87,7 +162,7 @@ class FaceDetector(nn.Module):
     def load(cls, path, **kwargs):
         """
         load model from path
-    
+
         """
         model = cls(pretrain=False, **kwargs)
         model.load_state_dict(torch.load(path))
