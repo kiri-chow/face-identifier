@@ -5,25 +5,50 @@ Created on Wed Apr  3 23:12:49 2024
 
 @author: anthony
 """
-import os
+from collections import OrderedDict
 import torch
-from PIL import Image
-import numpy as np
 from torch import nn
-from face_identifier.models import FaceDetector
-from face_identifier.datasets import TENSOR2IMG, TENSORIZER, read_image
+from torchvision.transforms import v2
+from torchvision.models import mobilenet_v2
+
+
+class LandmarksDetector(nn.Module):
+    """
+    The face landmarks detector
+
+    """
+    @classmethod
+    def load(cls, path):
+        obj = cls()
+        obj.model.load_state_dict(torch.load(path))
+        return obj
+
+    def __init__(self):
+        super().__init__()
+        model = mobilenet_v2(weights=None)
+        num_features = model.classifier[1].in_features
+        model.classifier[1] = nn.Linear(num_features, 10)
+        self.model = model
+
+    def forward(self, x):
+        # normalization
+        # means = x.mean([0, 2, 3])
+        # stds = x.std([0, 2, 3])
+        # norm = v2.Normalize(means, stds)
+        norm = v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+        # x = norm(x)
+        return self.model(x)
 
 
 class CropFace(nn.Module):
     """
-    Crop face area after detecting
+    Crop face area by detecting landmarks
 
     params
     ------
-    path : path,
-        path of face-detector's state dict.
-    threshold : [0, 1),
-        threshold determining the image has face or not.
+    model : nn.Module,
+        the landmark model return 5 points for eyes, nose, and mouth
     size : int,
         size of output image
     scalar : float,
@@ -31,68 +56,96 @@ class CropFace(nn.Module):
 
     """
 
-    def __init__(self, path, threshold=0.5, size=256, scalar=1.1):
+    def __init__(self, model, in_size=224, out_size=256, scalar=2):
         super().__init__()
-        self.model = FaceDetector.load(path)
-        self.threshold = threshold
-        self.size = size
+        self.model = model
+        self.in_size = in_size
+        self.out_size = out_size
         self.scalar = scalar
 
-    def crop_images(self, paths, save_dir="cropped"):
-        "crop and save images"
-        for path in paths:
-            image = Image.open(path)
-            bbox, has_face = self.get_bbox(read_image(path, self.size))
-            if not has_face:
-                continue
+        self.in_resizer = v2.Resize((self.in_size, self.in_size))
+        self.out_resizer = v2.Resize((self.out_size, self.out_size))
 
-            # crop
-            bbox = (np.array(bbox).reshape(2, 2) * image.size).flatten()
-            image_cropped = image.crop(bbox)
-
-            # save
-            _, fp = os.path.split(path)
-            os.makedirs(os.path.join(save_dir), exist_ok=True)
-            image_cropped.save(os.path.join(save_dir, fp))
-
-    def get_bbox(self, x):
+    def forward(self, imgs):
         """
-        return face bbox from tensor
+        crop the tensors
+
+        params
+        ------
+        imgs : torch.Tensor,
+            dims should be NCHW for batch images
+                or CHW for a single image,
+                or HW for a grayscale image.
 
         returns
         -------
-        bbox : [x1, y1, x2, y2],
-        has_face : bool
+        tensors : torch.Tensor,
+            images with faces, dims NCHW
+
+        """
+        x_new = self.in_resizer(imgs)
+        bboxes = self.get_bboxes(x_new)
+
+        # crop
+        n = imgs.size(0)
+        imgs_new = torch.cat([self._crop_one_image(img, bbox)
+                              for (img, bbox) in zip(imgs, bboxes)]
+                             ).view(n, -1, self.out_size, self.out_size)
+        return imgs_new
+
+    def _crop_one_image(self, img, bbox):
+        height = img.size(-2)
+        width = img.size(-1)
+        scaler = torch.Tensor([width, height])
+
+        # scalr the bbox
+        (xmin, xmax), (ymin, ymax) = (
+            bbox.view(2, 2) * scaler).transpose(0, 1).long()
+        img = img[..., ymin: ymax, xmin: xmax]
+        return self.out_resizer(img)
+
+    def get_bboxes(self, x):
+        """
+        return face bboxes from tensors
+
+        returns
+        -------
+        bboxes : n * [x1, y1, x2, y2],
 
         """
         with torch.no_grad():
-            # detect face
+            # detect landmarks
             self.model.eval()
-            prediction = self.model(x.view(1, *x.shape))[0]
-            prediction = prediction.cpu().detach().numpy()
-            has_face = prediction[0]
+            x = self._convert_x_shape(x)
+            landmarks = self.model(x)
 
-            # no face
-            if has_face <= self.threshold:
-                return [0, 0, 0, 0], False
+            # compute bboxes
+            bboxes = self._compute_bboxes(landmarks)
+            return bboxes
 
-            # crop image
-            bbox = prediction[1:]
-            x1, y1, x2, y2 = bbox
-            x1, x2 = sorted([x1, x2])
-            y1, y2 = sorted([y1, y2])
-            x1, y1 = (x / self.scalar for x in (x1, y1))
-            x2, y2 = (x * self.scalar for x in (x2, y2))
-            return [x1, y1, x2, y2], True
+    def _convert_x_shape(self, x):
+        x_shape = x.shape
+        x_dims = len(x_shape)
+        if x_dims < 4:
+            new_shape = [-1, 1, self.in_size, self.in_size]
+            new_shape[-x_dims:] = x_shape
+            x = x.view(*new_shape)
+        return x
 
-    def forward(self, *args):
-        "crop tensor"
-        x = args[0]
-        bbox, has_face = self.get_bbox(x)
-        if not has_face:
-            return torch.zeros_like(x)
+    def _compute_bboxes(self, landmarks):
+        n = landmarks.size(0)
+        landmarks = landmarks.view(n, 5, 2)
+        noses = landmarks[:, [2], :]
 
-        bbox = [b * self.size for b in bbox]
-        image = TENSOR2IMG(x).crop(bbox).resize((self.size, self.size))
-        out = TENSORIZER(image) / 256
-        return out
+        # scale the cectors
+        vectors = (landmarks[:, [0, 1, 3, 4], :] - noses) * self.scalar
+        noses_offset = -vectors.mean(1) / 5
+
+        new_noses = noses.view(n, 2) + noses_offset
+        anchors = torch.cat([(vectors + noses).view(n, -1) , new_noses], dim=1)
+        anchors = anchors.view(n, 5, 2)
+
+        xymin = anchors.min(1)[0].view(n, 2)
+        xymax = anchors.max(1)[0].view(n, 2)
+        bboxes = torch.cat([xymin, xymax], dim=1)
+        return bboxes

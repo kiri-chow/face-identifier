@@ -8,7 +8,6 @@ Created on Tue Apr  2 20:07:34 2024
 from math import inf
 from tqdm import tqdm
 import torch
-from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 

@@ -10,7 +10,6 @@ from itertools import combinations, product, groupby
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 import torch
-from torch.nn import functional as F
 from torch.utils.data import Dataset, DataLoader
 from face_identifier.models import TwinModel
 from face_identifier.datasets import draw_tensor_image, _BaseImageReader
