@@ -12,6 +12,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torchvision.models import (
+    mobilenet_v3_small, MobileNet_V3_Small_Weights,
     mobilenet_v3_large, MobileNet_V3_Large_Weights,
 )
 
@@ -147,3 +148,47 @@ class FaceIdentifier(nn.Module):
             self.eval()
             vectors = self.forward(images)
         return vectors
+
+
+class FaceDetector(nn.Module):
+    """
+    detect bbox of face
+
+    params
+    ------
+    pretrain : bool,
+        Load the pretrain weight or not.
+
+    """
+    @classmethod
+    def load(cls, path, **kwargs):
+        """
+        load model from path
+
+        """
+        model = cls(pretrain=False, **kwargs)
+        model.load_state_dict(torch.load(path))
+        return model
+
+    def __init__(self, pretrain=True):
+        super().__init__()
+
+        weights = None
+        if pretrain:
+            weights = MobileNet_V3_Small_Weights.DEFAULT
+        self.model = mobilenet_v3_small(weights=weights)
+
+        last_output = self.model.classifier[-1].out_features
+        self.has_face = nn.Sequential(nn.Linear(last_output, 1), nn.Sigmoid())
+        self.bbox = nn.Sequential(nn.ReLU(), nn.Linear(last_output, 4))
+
+    def forward(self, x):
+        "forward propagation"
+        x = self.model(x)
+        has_face = self.has_face(x)
+        bbox = self.bbox(x)
+
+        # mask bbox
+        bbox[(has_face <= 0.5).flatten()] = 0
+        to_return = torch.cat([has_face, bbox], dim=1)
+        return to_return
