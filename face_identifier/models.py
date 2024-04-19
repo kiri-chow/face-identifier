@@ -8,12 +8,13 @@ Created on Tue Apr  2 11:14:35 2024
 The identifier model.
 
 """
+from collections import OrderedDict
 import torch
 from torch import nn
 from torch.nn import functional as F
 from torchvision.models import (
+    resnet50, ResNet50_Weights,
     mobilenet_v3_small, MobileNet_V3_Small_Weights,
-    mobilenet_v3_large, MobileNet_V3_Large_Weights,
 )
 
 
@@ -113,41 +114,39 @@ class FaceIdentifier(nn.Module):
         # load the pretrain weights
         weights = None
         if pretrain:
-            weights = MobileNet_V3_Large_Weights.DEFAULT
-        self.model = mobilenet_v3_large(weights=weights)
+            weights = ResNet50_Weights.DEFAULT
+        self.model = resnet50(weights=weights)
 
-        # modify the final layer
+        # lock the convolution layers
+        for i in range(1, lock_num + 1):
+            layer = getattr(self.model, f'layer{i}')
+            for parameters in layer.parameters():
+                parameters.requires_grad = False
+
+        # add the final layer
         self.out_features = output_dim
-        final_layer = self.model.classifier[-1]
-        self.model.classifier[-1] = nn.Linear(
-            in_features=final_layer.in_features,
-            out_features=self.out_features,
-        )
+        self.fc = nn.Sequential(OrderedDict([
+            ("relu1", nn.ReLU()),
+            ("ln2", nn.Linear(self.model.fc.out_features, output_dim)),
+        ]))
 
     def forward(self, x):
         "forward propagation"
-        y = self.model(x)
+        y = self._base_forward(x)
 
         # test time augmentation
         if not self.training:
             # x.dim : N, C, H, W, flip the last dim is a horizontal flipping
-            y2 = self.model(x.flip(-1))
+            y2 = self._base_forward(x.flip(-1))
             y += y2
 
         # normalization
         return F.normalize(y)
 
-    def predict(self, *images):
-        """
-        return vectors for images tensor.
-
-        """
-        img0 = images[0]
-        images = torch.cat(images).view(-1, *img0.shape)
-        with torch.no_grad():
-            self.eval()
-            vectors = self.forward(images)
-        return vectors
+    def _base_forward(self, x):
+        y = self.model(x)
+        y = self.fc(y)
+        return y
 
 
 class FaceDetector(nn.Module):

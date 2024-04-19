@@ -16,7 +16,7 @@ from face_identifier.datasets import draw_tensor_image, _BaseImageReader
 
 
 def evaluate_classification(model, dataset, n_samples=200,
-                            threshold=0.5,
+                            threshold=0.8,
                             batch_size=64, device='cpu'):
     """
     evaluate the model as a classification task.
