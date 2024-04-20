@@ -79,7 +79,7 @@ class CropFace(nn.Module):
             img = img[..., ymin: ymax, xmin: xmax]
 
             return self.out_resizer(img)
-        return torch.zeros((self.out_size, self.out_size), dtype=img.dtype)
+        return torch.zeros((3, self.out_size, self.out_size), dtype=img.dtype).to(self.device)
 
     def get_bboxes(self, x):
         """

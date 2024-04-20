@@ -67,7 +67,7 @@ class ModelTrainer:
     def __init__(self, model, training_set, val_set, optimizer,
                  loss_func, batch_size=10, device='cpu',
                  save_path="face-identifier.pt",
-                 model_type='identifier',
+                 model_type='identifier', test_func=None,
                  log_dir=None, log_name='Loss'):
         self.model = model
 
@@ -83,6 +83,7 @@ class ModelTrainer:
         self.writer = SummaryWriter(log_dir)
         self.log_name = log_name
         self.call_func = MODEL_TO_FUNC[model_type]
+        self.test_func = test_func
 
         self.epochs_trained = 0
         self.best_loss = inf
@@ -105,7 +106,8 @@ class ModelTrainer:
         if not self.epochs_trained:
             self.best_loss = test(
                 self.model, tqdm(self.val_loader, 'Valing'),
-                call_func=self.call_func,
+                call_func=(
+                    self.test_func if self.test_func else self.call_func),
                 loss_func=self.loss_func,
                 device=self.device)
             self.save_model()
@@ -129,7 +131,8 @@ class ModelTrainer:
             # validation
             val_loss = test(
                 self.model, tqdm(self.val_loader, desc="Valing"),
-                call_func=self.call_func,
+                call_func=(
+                    self.test_func if self.test_func else self.call_func),
                 loss_func=self.loss_func,
                 device=self.device)
 

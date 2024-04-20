@@ -96,6 +96,8 @@ class FaceIdentifier(nn.Module):
         Load the pretrain weight or not.
     lock_num : int,
         Number of convolution layers to lock.
+    tta : bool,
+        Use test time augmentation or not
 
     """
     @classmethod
@@ -108,8 +110,9 @@ class FaceIdentifier(nn.Module):
         model.load_state_dict(torch.load(path))
         return model
 
-    def __init__(self, output_dim=1000, pretrain=True, lock_num=0):
+    def __init__(self, output_dim=500, pretrain=True, lock_num=0, tta=False):
         super().__init__()
+        self.tta = tta
 
         # load the pretrain weights
         weights = None
@@ -135,7 +138,7 @@ class FaceIdentifier(nn.Module):
         y = self._base_forward(x)
 
         # test time augmentation
-        if not self.training:
+        if not self.training and self.tta:
             # x.dim : N, C, H, W, flip the last dim is a horizontal flipping
             y2 = self._base_forward(x.flip(-1))
             y += y2
@@ -147,6 +150,13 @@ class FaceIdentifier(nn.Module):
         y = self.model(x)
         y = self.fc(y)
         return y
+
+    def predict(self, *args):
+        img0 = args[0]
+        x = torch.cat(args).view(-1, *img0.shape)
+        with torch.no_grad():
+            self.eval()
+            return self(x)
 
 
 class FaceDetector(nn.Module):

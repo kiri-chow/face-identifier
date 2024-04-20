@@ -16,7 +16,7 @@ from face_identifier.datasets import draw_tensor_image, _BaseImageReader
 
 
 def evaluate_classification(model, dataset, n_samples=200,
-                            threshold=0.8,
+                            threshold=0.8, transform=None,
                             batch_size=64, device='cpu'):
     """
     evaluate the model as a classification task.
@@ -55,7 +55,14 @@ def evaluate_classification(model, dataset, n_samples=200,
         evl_model.to(device)
         evl_model.eval()
         for imgs1, imgs2, labels in tqdm(clf_loader, 'Testing'):
-            pred = evl_model(imgs1.to(device), imgs2.to(device))
+            imgs1 = imgs1.to(device)
+            imgs2 = imgs2.to(device)
+
+            if transform:
+                imgs1 = transform(imgs1)
+                imgs2 = transform(imgs2)
+
+            pred = evl_model(imgs1, imgs2)
 
             pred = pred.cpu().numpy() > 0.5
             labels = labels.numpy().astype(bool)
@@ -121,7 +128,8 @@ class BinaryDataset(Dataset, _BaseImageReader):
         fig.suptitle('same' if label else "diff")
 
 
-def visualize(model, dataset, index):
+def visualize(model, dataset, index, transform=None,
+              device='cpu'):
     """
     Visualize the result.
 
@@ -137,9 +145,15 @@ def visualize(model, dataset, index):
     """
     # vectorization
     images = dataset[index]
-    model.to('cpu')
-    vectors = model.predict(*images)
-    vector1, vector2, vector3 = vectors.numpy()
+    images = torch.cat(images).view(-1, *images[0].shape).to(device)
+    if transform:
+        images = transform(images)
+
+    model.to(device)
+    model.eval()
+    with torch.no_grad():
+        vectors = model(images)
+        vector1, vector2, vector3 = vectors.cpu().numpy()
 
     fig, axes = plt.subplots(1, 3)
     titles = [
