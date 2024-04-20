@@ -13,7 +13,7 @@ from .models import FaceDetector
 
 class CropFace(nn.Module):
     """
-    Crop face area by detecting landmarks
+    Crop face area by detecting face
 
     params
     ------
@@ -128,3 +128,105 @@ class CropFace(nn.Module):
 
         bboxes = bboxes.view(-1, 4)
         return has_face, bboxes
+
+
+class CropFaceByLandmarks(CropFace):
+    """
+    Crop face area by detecting landmarks
+
+    params
+    ------
+    model : nn.Module,
+        the landmark model return 5 points for eyes, nose, and mouth
+    size : int,
+        size of output image
+    scalar : float,
+        scaling detected bbox
+
+    """
+
+    def forward(self, imgs):
+        """
+        crop the tensors
+
+        params
+        ------
+        imgs : torch.Tensor,
+            dims should be NCHW for batch images
+                or CHW for a single image,
+                or HW for a grayscale image.
+
+        returns
+        -------
+        tensors : torch.Tensor,
+            images with faces, dims NCHW
+
+        """
+        x_new = self.in_resizer(imgs)
+        bboxes = self.get_bboxes(x_new)
+
+        # crop
+        n = imgs.size(0)
+        imgs_new = torch.cat([self._crop_one_image(img, bbox)
+                              for (img, bbox) in zip(imgs, bboxes)]
+                             ).view(n, -1, self.out_size, self.out_size)
+        return imgs_new
+
+    def _crop_one_image(self, img, bbox):
+        height = img.size(-2)
+        width = img.size(-1)
+        scaler = torch.Tensor([width, height]).to(self.device)
+
+        # scalr the bbox
+        (xmin, xmax), (ymin, ymax) = (
+            bbox.view(2, 2) * scaler).transpose(0, 1).long()
+        img = img[..., ymin: ymax, xmin: xmax]
+        return self.out_resizer(img)
+
+    def get_bboxes(self, x):
+        """
+        return face bboxes from tensors
+
+        returns
+        -------
+        bboxes : n * [x1, y1, x2, y2],
+
+        """
+        with torch.no_grad():
+            # detect landmarks
+            self.model.eval()
+            x = self._convert_x_shape(x)
+            landmarks = self.model(x)
+
+            # compute bboxes
+            bboxes = self._compute_bboxes(landmarks)
+            return bboxes
+
+    def _convert_x_shape(self, x):
+        x_shape = x.shape
+        x_dims = len(x_shape)
+        if x_dims < 4:
+            new_shape = [-1, 1, self.in_size, self.in_size]
+            new_shape[-x_dims:] = x_shape
+            x = x.view(*new_shape)
+        return x
+
+    def _compute_bboxes(self, landmarks):
+        n = landmarks.size(0)
+        landmarks = landmarks.view(n, 5, 2)
+        noses = landmarks[:, [2], :]
+
+        # scale the cectors
+        vectors = (landmarks[:, [0, 1, 3, 4], :] - noses) * self.scale
+        noses_offset = -vectors.mean(1) / 5
+
+        new_noses = noses.view(n, 2) + noses_offset
+        anchors = torch.cat([(vectors + noses).view(n, -1) , new_noses], dim=1)
+        anchors = anchors.view(n, 5, 2)
+
+        xymin = anchors.min(1)[0].view(n, 2)
+        xymin[xymin < 0] = 0
+        xymax = anchors.max(1)[0].view(n, 2)
+
+        bboxes = torch.cat([xymin, xymax], dim=1)
+        return bboxes
